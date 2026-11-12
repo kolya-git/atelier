@@ -55,12 +55,19 @@ Instagram erlaubt kein Posten aus Web-Apps. Atelier bereitet deshalb alles vor, 
 1. **Foto öffnen**, am besten das Original in voller Auflösung, nicht die Kopie aus dem Planer.
 2. **Format und Auflösung** wählen. Die Leiste unten zeigt, wie viele ppi das Foto im Druck hat und ob es für die Größe reicht.
 3. **Stil wählen und einstellen:**
-   - **Galerie:** Passepartout-Rand, optional geprägter Plattenrand wie beim Tiefdruck und eine feine Haarlinie.
-   - **Aussparung:** Bereiche werden entlang natürlicher Linien herausgenommen, etwa entlang heller oder dunkler Bildbereiche, des Bildrands oder einer Richtung. Im Freiraum zeigt sich Leinen oder Papier. Beim Untergrund „Weiß“ bleibt die Fläche unbedruckt, sodass bei echtem Leinen das Material selbst sichtbar wird. Bei „Transparent“ (PNG) wird sie durchsichtig. Optional erscheinen im Freiraum Höhenlinien.
-   - **Edeldruck:** Cyanotypie, Platin/Palladium, Van Dyke, Salzpapier, Silbergelatine oder Kallitypie, jeweils mit gestrichenem Pinselrand und Borstenspuren auf Büttenpapier.
-   - **Topografie:** Höhenlinien aus den Helligkeiten des Fotos, wahlweise als reines Linienbild, über dem Foto oder als Übergang vom Foto in Linien.
+   - **Galerie:** Passepartout-Rand, optional geprägter Plattenrand wie beim Tiefdruck, mit einem Hauch Plattenton, und eine feine Haarlinie.
+   - **Aussparung:** Bereiche werden entlang natürlicher Linien herausgenommen, etwa entlang heller oder dunkler Bildbereiche, des Bildrands oder einer Richtung. Im Freiraum zeigt sich Leinen oder Papier. Der Übergang kann breit und weich auslaufen, das Foto zum Rand hin unscharf werden. Beim Untergrund „Weiß“ bleibt die Fläche unbedruckt, sodass bei echtem Leinen das Material selbst sichtbar wird. Bei „Transparent“ (PNG) wird sie durchsichtig. Optional erscheinen im Freiraum Höhenlinien, die den Helligkeiten oder dem Motivrand folgen.
+   - **Edeldruck:** Cyanotypie (auch mit Tee getönt), Platin/Palladium, Van Dyke, Salzpapier, Silbergelatine, Kallitypie, Lumen (Sonnendruck) und Gummidruck in Terrakotta oder Grünspan. Jedes Verfahren hat einen gestrichenen Pinselrand mit Borstenspuren auf Büttenpapier.
+   - **Topografie:** Höhenlinien, die den Helligkeiten des Fotos, dem Motivrand oder beidem folgen. Es gibt vier Darstellungen:
+     - **nur Linien**
+     - **Linien über dem Foto**
+     - **Übergang vom Foto in Linien:** Der Übergang ist einstellbar weich, die Linien reichen ins Foto hinein und blenden nach außen aus. Das Foto kann zum Rand hin unscharf werden.
+     - **Höhenschichten:** Farbflächen in Tonstufen mit Paletten wie Erde, Moor, See, Ton und Graphit.
    - **Linienstich:** Das Bild wird aus fließenden Linien aufgebaut, deren Stärke der Helligkeit folgt. Optional mit Relief und Kreuzschraffur.
    - **Büttenrand:** das Foto als Fragment mit gerissenem, faserigem Rand und zartem Schatten.
+   - **Punktstich:** unregelmäßig gesetzte Tuschepunkte wie von Hand getupft, dicht in den Tiefen und locker in den Lichtern, auf Wunsch in den Farben des Fotos.
+   - **Strömung:** feine Striche, die den Formen des Bildes folgen, wie eine Federzeichnung oder Holzmaserung.
+   - Punktstich und Strömung gibt es auch als weichen Übergang aus dem Foto.
 4. **Maske** (Apple Pencil oder Finger): grob „Behalten“ oder „Entfernen“ malen. Die Kante folgt danach automatisch natürlichen Linien.
 5. **Lupe:** zeigt einen Ausschnitt in 100 %, genau so, wie er in der Druckdatei steht (Korn, Fasern, Linien).
 6. **Neu würfeln:** eine neue zufällige, aber reproduzierbare Variante der Fasern und Pinselstriche.

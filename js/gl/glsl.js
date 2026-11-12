@@ -361,13 +361,44 @@ vec3 groundColor(vec2 mm) {
 
 // ---------- Bild ----------
 vec3 photoRaw(Ctx c) { return sampleSrc(c.tuv, c.tdx, c.tdy); }
-vec3 photoLook(Ctx c) {
-  vec3 s = photoRaw(c);
+vec3 lookOf(vec3 s, Ctx c) {
   if (u_lookOn < 0.5) return s;
   vec2 wsz = (u_imgRect.zw - u_imgRect.xy) * u_paperMM;
   return applyLook(s, c.iuv, wsz.x / wsz.y, c.mm / max(u_grainSize, 0.01), clamp(u_grainSize / u_mmPerPx, 0.0, 1.0));
 }
+vec3 photoLook(Ctx c) { return lookOf(photoRaw(c), c); }
 vec4 field(Ctx c) { return sampleBS(u_field, clamp(c.ouv, 0.0, 1.0), u_fieldSize); }
+
+// B-Spline auf einer Mipmap-Stufe: weiche Unschärfe ohne Blockmuster
+vec4 sampleBSlod(sampler2D tex, vec2 uv, vec2 size, float lod) {
+  vec2 p = uv * size - 0.5;
+  vec2 i = floor(p); vec2 f = p - i;
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = (-f3 + 3.0 * f2 - 3.0 * f + 1.0) / 6.0;
+  vec2 w1 = (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0;
+  vec2 w2 = (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0;
+  vec2 w3 = f3 / 6.0;
+  vec2 g0 = w0 + w1, g1 = w2 + w3;
+  vec2 h0 = (i - 0.5 + w1 / g0) / size;
+  vec2 h1 = (i + 1.5 + w3 / g1) / size;
+  return g0.y * (g0.x * textureLod(tex, vec2(h0.x, h0.y), lod) + g1.x * textureLod(tex, vec2(h1.x, h0.y), lod))
+       + g1.y * (g0.x * textureLod(tex, vec2(h0.x, h1.y), lod) + g1.x * textureLod(tex, vec2(h1.x, h1.y), lod));
+}
+vec3 sampleBlur(vec2 tuv, float lod) {
+  float l0 = floor(lod);
+  float t = lod - l0;
+  vec2 s0 = max(floor(u_srcSize / exp2(l0)), vec2(1.0));
+  vec2 s1 = max(floor(u_srcSize / exp2(l0 + 1.0)), vec2(1.0));
+  return mix(sampleBSlod(u_src, tuv, s0, l0).rgb, sampleBSlod(u_src, tuv, s1, l0 + 1.0).rgb, t);
+}
+float srcLodBase(Ctx c) { return max(0.0, log2(max(max(length(c.tdx * u_srcSize), length(c.tdy * u_srcSize)), 1e-4))); }
+// Foto, das zum Rand hin unscharf wird (w: 0 scharf … 1 maximal, amt: Stärke 0..1)
+vec3 photoBlend(Ctx c, float amt, float w) {
+  vec3 sharp = photoRaw(c);
+  if (amt <= 0.001 || w <= 0.001) return lookOf(sharp, c);
+  vec3 b = sampleBlur(c.tuv, srcLodBase(c) + amt * 6.5 * w);
+  return lookOf(mix(sharp, b, clamp(w * amt * 3.0, 0.0, 1.0)), c);
+}
 
 float coverLine(float dpx, float wpx) { return clamp(min(dpx + 0.5, wpx * 0.5) - max(dpx - 0.5, -wpx * 0.5), 0.0, 1.0); }
 
@@ -398,31 +429,50 @@ float maskFieldAt(vec2 iuv, vec2 ouv) {
   return F;
 }
 
-// Rückgabe: Anteil „behalten“ (0..1). edgeMM: ungefährer Abstand zur Kante (mm, + innen)
-float organicKeep(Ctx c, float thresholdShift, out float edgeMM) {
+// Breite des Übergangs: „Weichheit“ (fein) + zusätzlicher, breiter Übergang
+float softWidth(float extra) { return mix(0.0, 0.14, u_p[3] * u_p[3]) + mix(0.0, 0.5, extra * extra); }
+
+// F: Maskenwert mit Fasern, Fs: geglättet (für Linien entlang des Motivrands), T: Schwelle
+void maskValues(Ctx c, out float F, out float Fs, out float T) {
   float scale = mix(6.0, 60.0, u_p[6]);
   vec2 wv = vec2(fbm(c.mm / scale, 5, u_seed + 1u), fbm(c.mm / scale + 19.7, 5, u_seed + 2u));
   vec2 iuvW = c.iuv + wv * u_p[4] * 0.09;
   vec2 ouvW = mix(u_crop.xy, u_crop.zw, iuvW);
-  float F = maskFieldAt(iuvW, ouvW);
+  Fs = maskFieldAt(iuvW, ouvW);
   vec2 fq = c.mm + 0.6 * vec2(gnoise(c.mm / 1.7, u_seed + 5u), gnoise(c.mm / 1.7 + 3.7, u_seed + 6u));
   float fib = fbm(fq / 1.1, 4, u_seed + 3u);
   float fib2 = gnoise(fq / 0.22, u_seed + 4u);
-  F += (fib * 0.78 + fib2 * 0.22) * u_p[5] * 0.12;
-  float T = u_p[0] + thresholdShift;
+  F = Fs + (fib * 0.78 + fib2 * 0.22) * u_p[5] * 0.12;
+  T = u_p[0];
+}
+
+// Anteil „behalten“ (0..1). edgeMM: ungefährer Abstand zur Kante (mm, + innen)
+float keepFrom(float F, float T, float extra, out float edgeMM) {
   float g = max(fwidth(F), 1e-6);
-  float soft = mix(0.0, 0.14, u_p[3] * u_p[3]);
+  float soft = softWidth(extra);
   edgeMM = (F - T) / g * u_mmPerPx;
   float aa = g * 0.75;
   return smoothstep(T - soft - aa, T + soft + aa, F);
 }
+float organicKeep(Ctx c, float thresholdShift, out float edgeMM) {
+  float F, Fs, T;
+  maskValues(c, F, Fs, T);
+  return keepFrom(F, T + thresholdShift, 0.0, edgeMM);
+}
 
 // ---------- Höhenlinien ----------
-float contours(Ctx c, float levels, float widthMM, float idxEvery, float smoothness) {
+// Wert, dessen Höhenlinien gezeichnet werden: Helligkeit, Motivrand (Maske) oder beides
+float topoValue(Ctx c, float smoothness, float source, float Fs) {
   vec4 fl = field(c);
   float L = mix(mix(fl.r, fl.g, smoothstep(0.0, 0.5, smoothness)), fl.b, smoothstep(0.5, 1.0, smoothness));
   L += 0.006 * fbm(c.mm / 30.0, 3, u_seed + 501u);
-  float v = L * levels;
+  if (source > 0.5) {
+    float m = Fs * 0.8 + 0.1;
+    L = source < 1.5 ? m : mix(L, m, 0.5);
+  }
+  return L;
+}
+float contourCov(float v, float widthMM, float idxEvery) {
   float fwv = max(fwidth(v), 1e-6);
   float d = abs(fract(v + 0.5) - 0.5);
   float dpx = d / fwv;
@@ -435,6 +485,9 @@ float contours(Ctx c, float levels, float widthMM, float idxEvery, float smoothn
   // zu dichte Linien → mittlere Deckung statt Flimmern
   float dens = smoothstep(0.35, 0.8, fwv);
   return mix(cov, clamp(lw * fwv, 0.0, 1.0) * 0.8, dens);
+}
+float contours(Ctx c, float levels, float widthMM, float idxEvery, float smoothness) {
+  return contourCov(topoValue(c, smoothness, 0.0, 0.0) * levels, widthMM, idxEvery);
 }
 
 // ---------- Stil 0: Galerie ----------
@@ -457,6 +510,10 @@ vec4 styleGalerie(Ctx c) {
     float lightDot = dot(-nrm, normalize(vec2(-0.55, -0.83)));
     col *= 1.0 + bev * lightDot * 0.075 * u_p[14];
     col *= 1.0 + 0.008 * u_p[14] * (1.0 - smoothstep(-0.3, 0.3, sd));
+    // Plattenton: ein Hauch Druckfarbe auf der Plattenfläche, wie beim Tiefdruck
+    float inside = 1.0 - smoothstep(-0.2, 0.2, sd);
+    float haze = 0.7 + 0.3 * fbm(c.mm / 9.0, 3, u_seed + 31u);
+    col *= mix(vec3(1.0), u_ink / max(u_paper, vec3(0.05)), 0.07 * u_p[17] * inside * haze);
   }
   if (u_p[15] > 0.0) {
     // feine Linie um das Bild
@@ -472,10 +529,13 @@ vec4 styleGalerie(Ctx c) {
 // ---------- Stil 1: Aussparung (Leinen/Papier scheint durch) ----------
 vec4 styleReveal(Ctx c) {
   vec3 ground = groundColor(c.mm);
+  float F, Fs, T;
+  maskValues(c, F, Fs, T);
   float edgeMM;
-  float keep = organicKeep(c, 0.0, edgeMM) * c.inWin;
-  float lines = u_p[14] > 0.0 ? contours(c, u_p[15], 0.18, 0.0, 0.55) : 0.0;
-  vec3 ph = photoLook(c);
+  float keep = keepFrom(F, T, u_p[16], edgeMM) * c.inWin;
+  float softW = softWidth(u_p[16]);
+  float lines = u_p[14] > 0.0 ? contourCov(topoValue(c, 0.55, u_p[17], Fs) * u_p[15], 0.18, 0.0) : 0.0;
+  vec3 ph = photoBlend(c, u_p[11], 1.0 - smoothstep(T - softW, T + softW + 0.25, Fs));
   vec3 tex = ground / max(u_paper, vec3(0.05));
   vec3 onGround = ph * mix(vec3(1.0), tex, u_p[12]);
   onGround *= mix(vec3(1.0), u_paper / max(max(u_paper.r, max(u_paper.g, u_paper.b)), 0.05), u_p[13]);
@@ -541,28 +601,62 @@ vec4 styleAltProcess(Ctx c) {
 }
 
 // ---------- Stil 3: Topografie (Höhenlinien aus dem Bild) ----------
+// p12 Darstellung, p13 Linien, p14 Stärke, p15 betonte Linie, p16 Ruhe, p17 Farbe aus Bild, p18 Bild unter Linien,
+// p19 Übergang weich, p20 Linien ins Bild, p21 außen ausblenden, p22 Linien folgen, p11 Unschärfe,
+// p9 Anzahl Schichten, p8 Schichtfarbe aus Bild, p23 Linien zwischen Schichten
 vec4 styleTopo(Ctx c) {
   vec3 ground = groundColor(c.mm);
   vec3 tex = ground / max(u_paper, vec3(0.05));
   float mode = u_p[12];
-  float cov = contours(c, u_p[13], u_p[14], u_p[15], u_p[16]) * c.inWin;
-  vec3 ph = photoLook(c);
-  vec3 lineCol = mix(u_ink, clamp(ph * 0.62, 0.0, 1.0), u_p[17]) * tex;
+  float F = 0.0, Fs = 0.0, T = 0.5;
+  bool needMask = (mode > 1.5 && mode < 2.5) || (mode < 2.5 && u_p[22] > 0.5);
+  if (needMask) maskValues(c, F, Fs, T);
+  float L = topoValue(c, u_p[16], mode < 2.5 ? u_p[22] : 0.0, Fs);
   vec3 col;
   float alpha = 1.0;
-  if (mode < 0.5) {
-    col = mix(ground, lineCol, cov);
-    alpha = cov;
-  } else if (mode < 1.5) {
-    vec3 base = mix(ground, ph * tex, u_p[18] * c.inWin);
-    col = mix(base, lineCol, cov);
-    alpha = max(cov, u_p[18] * c.inWin);
+  if (mode > 2.5) {
+    // Höhenschichten: Flächen in Tonstufen, feine Linien an den Grenzen
+    float bands = max(2.0, u_p[9]);
+    float v = clamp(L, 0.0, 0.9999) * bands;
+    float fv = max(fwidth(v), 1e-5);
+    float up = smoothstep(1.0 - fv, 1.0, fract(v));
+    vec3 pal = mix(toneRamp(1.0 - (floor(v) + 0.5) / bands), toneRamp(1.0 - (floor(v) + 1.5) / bands), up);
+    vec3 phb = lookOf(sampleBlur(c.tuv, srcLodBase(c) + 3.5), c);
+    vec3 photoBand = clamp(phb * (luma(pal) / max(luma(phb), 0.02)), 0.0, 1.0);
+    vec3 fill = mix(pal, photoBand, u_p[8]) * tex * (1.0 - 0.025 * fbm(c.mm / 4.0, 3, u_seed + 41u));
+    float cov = contourCov(v, u_p[14], u_p[15]) * u_p[23];
+    vec3 lineCol = mix(u_ink * tex, fill * 0.55, u_p[17]);
+    col = mix(ground, mix(fill, lineCol, cov), c.inWin);
+    alpha = c.inWin;
   } else {
-    float edgeMM;
-    float keep = organicKeep(c, 0.0, edgeMM) * c.inWin;
-    vec3 linesOnGround = mix(ground, lineCol, cov);
-    col = mix(linesOnGround, ph * tex, keep);
-    alpha = max(keep, cov);
+    float cov = contourCov(L * u_p[13], u_p[14], u_p[15]) * c.inWin;
+    if (mode < 0.5) {
+      vec3 ph = photoLook(c);
+      vec3 lineCol = mix(u_ink, clamp(ph * 0.62, 0.0, 1.0), u_p[17]) * tex;
+      col = mix(ground, lineCol, cov);
+      alpha = cov;
+    } else if (mode < 1.5) {
+      vec3 ph = photoLook(c);
+      vec3 lineCol = mix(u_ink, clamp(ph * 0.62, 0.0, 1.0), u_p[17]) * tex;
+      vec3 base = mix(ground, ph * tex, u_p[18] * c.inWin);
+      col = mix(base, lineCol, cov);
+      alpha = max(cov, u_p[18] * c.inWin);
+    } else {
+      // Übergang Bild ↔ Linien: weich auslaufend, Linien beginnen früher und reichen ins Bild
+      float edgeMM;
+      float keep = keepFrom(F, T, u_p[19], edgeMM) * c.inWin;
+      float softW = softWidth(u_p[19]);
+      vec3 ph = photoBlend(c, u_p[11], 1.0 - smoothstep(T - softW, T + softW + 0.25, Fs));
+      vec3 lineCol = mix(u_ink, clamp(ph * 0.62, 0.0, 1.0), u_p[17]) * tex;
+      float lineEnd = T + softW * 0.6 + u_p[20] * 0.45;
+      float lineVis = 1.0 - smoothstep(lineEnd - 0.1 - softW * 0.5, lineEnd + 0.04, Fs);
+      float far = clamp((T - Fs) / mix(1.2, 0.12, u_p[21]), 0.0, 1.0);
+      lineVis *= 1.0 - u_p[21] * smoothstep(0.0, 1.0, far);
+      float a = cov * lineVis;
+      vec3 base = mix(ground, ph * tex, keep);
+      col = mix(base, lineCol, a * mix(1.0, 0.88, keep));
+      alpha = max(keep, a);
+    }
   }
   return vec4(col, u_ground == 3 ? alpha : 1.0);
 }
@@ -651,6 +745,130 @@ vec4 styleDeckle(Ctx c) {
   return vec4(col, alpha);
 }
 
+// Übergang Foto ↔ Technik (Punktstich, Strömung). p20: Modus, p21: Übergang weich, p11: Unschärfe
+vec3 withPhotoTransition(Ctx c, vec3 colT, vec3 tex, inout float alpha) {
+  if (u_p[20] < 0.5) return colT;
+  float F, Fs, T;
+  maskValues(c, F, Fs, T);
+  float edgeMM;
+  float keep = keepFrom(F, T, u_p[21], edgeMM) * c.inWin;
+  float softW = softWidth(u_p[21]);
+  vec3 ph = photoBlend(c, u_p[11], 1.0 - smoothstep(T - softW, T + softW + 0.25, Fs)) * tex;
+  alpha = max(alpha, keep);
+  return mix(colT, ph, keep);
+}
+
+// ---------- Stil 6: Punktstich (Stippling) ----------
+// p12 Abstand mm, p13 Unregelmäßigkeit, p14 Kontrast, p15 Größe in Tiefen, p16 Farbe aus Bild, p17 Punkte in Lichtern, p18 Punktkante
+float stippleRadius(float dark) { return sqrt(clamp(u_p[17] + dark * (1.0 - u_p[17]), 0.0, 1.0)) * u_p[15] * 0.6; }
+vec4 styleStipple(Ctx c) {
+  vec3 ground = groundColor(c.mm);
+  vec3 tex = ground / max(u_paper, vec3(0.05));
+  float sp = u_p[12];
+  vec2 winMin = u_imgRect.xy * u_paperMM;
+  vec2 winSz = (u_imgRect.zw - u_imgRect.xy) * u_paperMM;
+  float tpp = max(length(c.tdx * u_srcSize), length(c.tdy * u_srcSize));
+  float lod = max(0.0, log2(max(tpp * sp / u_mmPerPx, 1e-4)) - 0.5);
+  vec2 q = c.mm / sp;
+  vec2 cell = floor(q);
+  float px = sp / u_mmPerPx;
+  float cov = 0.0;
+  vec3 dotCol = u_ink;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 cc = cell + vec2(float(i), float(j));
+      ivec2 ic = ivec2(cc);
+      vec2 jit = vec2(rnd(ic, u_seed + 801u), rnd(ic, u_seed + 802u)) - 0.5;
+      vec2 ctr = cc + 0.5 + jit * u_p[13];
+      vec2 iuv = (ctr * sp - winMin) / winSz;
+      if (iuv.x < 0.0 || iuv.y < 0.0 || iuv.x > 1.0 || iuv.y > 1.0) continue;
+      vec2 tuv = (u_orient * vec3(mix(u_crop.xy, u_crop.zw, iuv), 1.0)).xy;
+      vec3 sCol = textureLod(u_src, tuv, lod).rgb;
+      if (u_lookOn > 0.5) sCol = applyLook(sCol, iuv, winSz.x / winSz.y, vec2(0.0), 0.0);
+      float dark = pow(clamp(1.0 - pow(luma(srgb2lin(sCol)), 1.0 / 2.2), 0.0, 1.0), u_p[14]);
+      float r = stippleRadius(dark);
+      if (r < 0.01) continue;
+      vec2 d = q - ctr;
+      float rr = r * (1.0 + u_p[18] * 0.22 * gnoise(d / max(r, 0.05) * 1.6 + cc * 3.1, u_seed + 803u));
+      float a = clamp((rr - length(d)) * px + 0.5, 0.0, 1.0);
+      if (a > cov) { cov = a; dotCol = mix(u_ink, clamp(sCol * 0.8, 0.0, 1.0), u_p[16]); }
+    }
+  }
+  // Punkte kleiner als ein paar Pixel (Vorschau): mittlerer Ton statt Flimmern
+  vec3 phP = photoLook(c);
+  float darkP = pow(clamp(1.0 - pow(luma(srgb2lin(phP)), 1.0 / 2.2), 0.0, 1.0), u_p[14]);
+  float rP = stippleRadius(darkP);
+  float lowRes = smoothstep(4.0, 1.6, px);
+  cov = mix(cov, clamp(3.14159 * rP * rP, 0.0, 1.0), lowRes);
+  dotCol = mix(dotCol, mix(u_ink, clamp(phP * 0.8, 0.0, 1.0), u_p[16]), lowRes);
+  cov *= c.inWin;
+  vec3 colT = mix(ground, dotCol * tex, cov);
+  float alpha = u_ground == 3 ? cov : 1.0;
+  colT = withPhotoTransition(c, colT, tex, alpha);
+  return vec4(colT, alpha);
+}
+
+// ---------- Stil 7: Strömung (Striche folgen den Formen des Bildes) ----------
+// p12 Strichlänge mm, p13 Strichbreite mm, p14 Kontrast, p15 Richtung in ruhigen Flächen, p16 Dichte,
+// p17 Farbe aus Bild, p18 Details ↔ große Formen, p19 weiche Strichkanten
+float flowL(vec2 ouv, float det) {
+  vec4 fl = textureLod(u_field, clamp(ouv, 0.0, 1.0), 0.0);
+  return mix(mix(fl.r, fl.g, smoothstep(0.0, 0.5, det)), fl.b, smoothstep(0.5, 1.0, det));
+}
+// Richtung entlang der Höhenlinien; in ruhigen Flächen sanft zur Grundrichtung (Mischung im Doppelwinkel)
+vec2 flowDirAt(vec2 mm, vec2 winMin, vec2 k, float det, float fa) {
+  vec2 ouv = u_crop.xy + (mm - winMin) * k;
+  vec2 e = 1.0 / u_fieldSize;
+  float gx = flowL(ouv + vec2(e.x, 0.0), det) - flowL(ouv - vec2(e.x, 0.0), det);
+  float gy = flowL(ouv + vec2(0.0, e.y), det) - flowL(ouv - vec2(0.0, e.y), det);
+  vec2 g = vec2(gx / (2.0 * e.x), gy / (2.0 * e.y)) * k;
+  float m = length(g);
+  float th = atan(g.x, -g.y);
+  float wgt = smoothstep(0.0015, 0.01, m);
+  vec2 o = mix(vec2(cos(2.0 * fa), sin(2.0 * fa)), vec2(cos(2.0 * th), sin(2.0 * th)), wgt);
+  float tb = 0.5 * atan(o.y, o.x + 1e-6);
+  return vec2(cos(tb), sin(tb));
+}
+vec4 styleFlow(Ctx c) {
+  vec3 ground = groundColor(c.mm);
+  vec3 tex = ground / max(u_paper, vec3(0.05));
+  vec2 winMin = u_imgRect.xy * u_paperMM;
+  vec2 winSz = (u_imgRect.zw - u_imgRect.xy) * u_paperMM;
+  vec2 k = (u_crop.zw - u_crop.xy) / winSz;
+  float det = u_p[18];
+  float fa = radians(u_p[15]);
+  float cellMM = max(u_p[13], u_mmPerPx * 1.6);
+  const int N = 14;
+  float stepMM = u_p[12] / (2.0 * float(N));
+  float sum = gnoise(c.mm / cellMM, u_seed + 901u);
+  float wsum = 1.0;
+  vec2 d0 = flowDirAt(c.mm, winMin, k, det, fa);
+  for (int sgn = 0; sgn < 2; sgn++) {
+    vec2 p = c.mm;
+    vec2 prev = sgn == 0 ? d0 : -d0;
+    for (int i = 1; i <= N; i++) {
+      vec2 d = flowDirAt(p, winMin, k, det, fa);
+      if (dot(d, prev) < 0.0) d = -d;
+      p += d * stepMM;
+      prev = d;
+      float w = 0.5 + 0.5 * cos(3.14159 * float(i) / float(N + 1));
+      sum += w * gnoise(p / cellMM, u_seed + 901u);
+      wsum += w;
+    }
+  }
+  float tval = 0.5 + (sum / wsum) * 1.9;
+  vec3 ph = photoLook(c);
+  float dark = pow(clamp(1.0 - pow(luma(srgb2lin(ph)), 1.0 / 2.2), 0.0, 1.0), u_p[14]);
+  float th = dark * 0.92 + u_p[16];
+  float edge = max(fwidth(tval), 1e-4) * 0.75 + u_p[19] * 0.08;
+  float cov = smoothstep(tval - edge, tval + edge, th) * c.inWin;
+  vec3 inkC = mix(u_ink, clamp(ph * 0.82, 0.0, 1.0), u_p[17]) * tex;
+  vec3 colT = mix(ground, inkC, cov);
+  float alpha = u_ground == 3 ? cov : 1.0;
+  colT = withPhotoTransition(c, colT, tex, alpha);
+  return vec4(colT, alpha);
+}
+
 void main() {
   Ctx c;
   c.px = outPx();
@@ -673,7 +891,9 @@ void main() {
   else if (u_style == 2) res = styleAltProcess(c);
   else if (u_style == 3) res = styleTopo(c);
   else if (u_style == 4) res = styleEngrave(c);
-  else res = styleDeckle(c);
+  else if (u_style == 5) res = styleDeckle(c);
+  else if (u_style == 6) res = styleStipple(c);
+  else res = styleFlow(c);
   if (u_showPaint > 0.5 && u_hasPaint > 0.5 && c.inWin > 0.0) {
     float pm = sampleBS(u_paint, clamp(c.ouv, 0.0, 1.0), u_paintSize).r - 0.5;
     vec3 tint = pm > 0.0 ? vec3(0.36, 0.55, 0.32) : vec3(0.75, 0.25, 0.22);

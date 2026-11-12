@@ -37,6 +37,19 @@ export const PROCESSES = {
   salz: { label: 'Salzpapier', tones: ['#3a2015', '#6d422f', '#a1725b', '#d5b8a2'], paperTint: '#f0e6d8' },
   silber: { label: 'Silbergelatine (neutral)', tones: ['#141414', '#434343', '#787878', '#b7b7b6'], paperTint: '#f3f2ef' },
   kalli: { label: 'Kallitypie', tones: ['#221b17', '#534339', '#897565', '#c5b4a4'], paperTint: '#f1eadf' },
+  teecyan: { label: 'Cyanotypie, mit Tee getönt', tones: ['#25212e', '#4e4451', '#8d8178', '#cfc4b0'], paperTint: '#efe6d5' },
+  lumen: { label: 'Lumen (Sonnendruck)', tones: ['#3a1f2c', '#7d4357', '#b98186', '#e3c0b4'], paperTint: '#f3e6dc' },
+  gummiterra: { label: 'Gummidruck Terrakotta', tones: ['#5a2d1f', '#8c4c35', '#c08668', '#e6c4aa'], paperTint: '#f1e5d6' },
+  gummigruen: { label: 'Gummidruck Grünspan', tones: ['#22342d', '#4a6457', '#8aa28c', '#ccd7c2'], paperTint: '#eef0e6' },
+};
+
+// Farbpaletten für Höhenschichten (dunkel → hell)
+export const LAYER_PALETTES = {
+  erde: { label: 'Erde', tones: ['#3b3127', '#6b5a45', '#a08a6a', '#cdbb9a', '#ece2cd'] },
+  moor: { label: 'Moor', tones: ['#2f3a33', '#51604f', '#7f8c74', '#b4b99d', '#e3e2cf'] },
+  see: { label: 'See', tones: ['#23323d', '#3f5867', '#6f8a96', '#a9bcc2', '#e1e7e5'] },
+  ton: { label: 'Ton', tones: ['#4a2c24', '#7b4a3b', '#ad7a62', '#d6ad93', '#f0dccb'] },
+  graphit: { label: 'Graphit', tones: ['#262626', '#4d4d4c', '#7c7b79', '#b0aeaa', '#e4e2dd'] },
 };
 
 export const STYLES = [
@@ -48,6 +61,7 @@ export const STYLES = [
       { key: 'plate', idx: 12, label: 'Plattenrand (Prägung)', type: 'toggle', def: 1, group: 'Rand' },
       { key: 'plateDist', idx: 13, label: 'Abstand Plattenrand', type: 'range', min: 2, max: 30, step: 0.5, def: 9, unit: 'mm', group: 'Rand', showIf: (p) => !!+p.plate },
       { key: 'plateStr', idx: 14, label: 'Stärke der Prägung', type: 'range', min: 0, max: 1, step: 0.01, def: 0.7, group: 'Rand', showIf: (p) => !!+p.plate },
+      { key: 'plateTone', idx: 17, label: 'Plattenton (Hauch Druckfarbe)', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Rand', showIf: (p) => !!+p.plate },
       { key: 'keyline', idx: 15, label: 'Haarlinie', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Rand' },
       { key: 'keyGap', idx: 16, label: 'Abstand Haarlinie', type: 'range', min: 0, max: 12, step: 0.5, def: 3, unit: 'mm', group: 'Rand', showIf: (p) => +p.keyline > 0 },
     ],
@@ -61,8 +75,11 @@ export const STYLES = [
       ...MASK, RIM, GHOST,
       { key: 'texIn', idx: 12, label: 'Struktur im Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0.35, group: 'Untergrund' },
       { key: 'tintIn', idx: 13, label: 'Grundton im Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0.12, group: 'Untergrund' },
+      { key: 'soft2', idx: 16, label: 'Übergang weich (breit auslaufend)', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Kante' },
+      { key: 'blur', idx: 11, label: 'Foto wird zum Rand unscharf', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Kante' },
       { key: 'lines', idx: 14, label: 'Höhenlinien im Freiraum', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Aussparung' },
       { key: 'lineLevels', idx: 15, label: 'Anzahl Linien', type: 'range', min: 8, max: 70, step: 1, def: 26, group: 'Aussparung', showIf: (p) => +p.lines > 0 },
+      { key: 'lineSource', idx: 17, label: 'Linien folgen …', type: 'select', def: 0, group: 'Aussparung', options: [[0, 'den Helligkeiten'], [1, 'dem Motivrand'], [2, 'beidem']], showIf: (p) => +p.lines > 0 },
     ],
   },
   {
@@ -83,17 +100,26 @@ export const STYLES = [
   },
   {
     id: 'topografie', idx: 3, name: 'Topografie',
-    desc: 'Höhenlinien, die den Helligkeiten des Bildes folgen – als reines Linienbild, über dem Foto oder als Übergang vom Foto in Linien.',
-    usesMask: (p) => +p.mode === 2,
+    desc: 'Höhenlinien, die den Helligkeiten oder dem Motivrand folgen – als Linienbild, über dem Foto, als weicher Übergang vom Foto in Linien oder als farbige Höhenschichten.',
+    usesMask: (p) => +p.mode === 2 || (+p.mode < 3 && +p.lineSource > 0),
     base: { border: 0.07, bottomExtra: 0.2, ground: 'paper', tone: '#f2ede4', texture: 0.5, ink: '#24221e' },
     params: [
-      { key: 'mode', idx: 12, label: 'Darstellung', type: 'select', def: 2, group: 'Linien', options: [[0, 'nur Linien'], [1, 'Linien über dem Bild'], [2, 'Übergang Bild ↔ Linien']] },
-      { key: 'levels', idx: 13, label: 'Anzahl Linien', type: 'range', min: 6, max: 90, step: 1, def: 30, group: 'Linien' },
+      { key: 'mode', idx: 12, label: 'Darstellung', type: 'select', def: 2, group: 'Linien', options: [[0, 'nur Linien'], [1, 'Linien über dem Bild'], [2, 'Übergang Bild ↔ Linien'], [3, 'Höhenschichten (Flächen)']] },
+      { key: 'lineSource', idx: 22, label: 'Linien folgen …', type: 'select', def: 0, group: 'Linien', options: [[0, 'den Helligkeiten'], [1, 'dem Motivrand'], [2, 'beidem']], showIf: (p) => +p.mode < 3 },
+      { key: 'levels', idx: 13, label: 'Anzahl Linien', type: 'range', min: 6, max: 90, step: 1, def: 30, group: 'Linien', showIf: (p) => +p.mode < 3 },
+      { key: 'bands', idx: 9, label: 'Anzahl Schichten', type: 'range', min: 3, max: 14, step: 1, def: 7, group: 'Linien', showIf: (p) => +p.mode === 3 },
+      { key: 'palette', label: 'Farben der Schichten', type: 'select', def: 'erde', group: 'Linien', options: Object.entries(LAYER_PALETTES).map(([k, v]) => [k, v.label]), showIf: (p) => +p.mode === 3 },
+      { key: 'bandColor', idx: 8, label: 'Farbe aus dem Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0.3, group: 'Linien', showIf: (p) => +p.mode === 3 },
+      { key: 'bandLines', idx: 23, label: 'Linien zwischen den Schichten', type: 'range', min: 0, max: 1, step: 0.01, def: 0.6, group: 'Linien', showIf: (p) => +p.mode === 3 },
       { key: 'width', idx: 14, label: 'Linienstärke', type: 'range', min: 0.06, max: 1.2, step: 0.01, def: 0.22, unit: 'mm', group: 'Linien' },
       { key: 'index', idx: 15, label: 'Betonte Linie', type: 'select', def: 5, group: 'Linien', options: [[0, 'keine'], [4, 'jede 4.'], [5, 'jede 5.'], [10, 'jede 10.']] },
       { key: 'smooth', idx: 16, label: 'Detailreich ↔ ruhig', type: 'range', min: 0, max: 1, step: 0.01, def: 0.45, group: 'Linien' },
       { key: 'lineColor', idx: 17, label: 'Linienfarbe aus dem Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Linien' },
       { key: 'imgOpacity', idx: 18, label: 'Bild unter den Linien', type: 'range', min: 0, max: 1, step: 0.01, def: 0.35, group: 'Linien', showIf: (p) => +p.mode === 1 },
+      { key: 'tSoft', idx: 19, label: 'Übergang weich (breit auslaufend)', type: 'range', min: 0, max: 1, step: 0.01, def: 0.3, group: 'Übergang', showIf: (p) => +p.mode === 2 },
+      { key: 'tReach', idx: 20, label: 'Linien reichen ins Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0.3, group: 'Übergang', showIf: (p) => +p.mode === 2 },
+      { key: 'tFade', idx: 21, label: 'Linien nach außen ausblenden', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Übergang', showIf: (p) => +p.mode === 2 },
+      { key: 'blur', idx: 11, label: 'Foto wird zum Rand unscharf', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Übergang', showIf: (p) => +p.mode === 2 },
       ...MASK.map((m) => ({ ...m, showIf: m.showIf ? (p) => +p.mode === 2 && m.showIf(p) : (p) => +p.mode === 2 })),
     ],
   },
@@ -123,6 +149,45 @@ export const STYLES = [
       { key: 'fringe', idx: 14, label: 'Papierfasern am Rand', type: 'range', min: 0, max: 8, step: 0.1, def: 2.2, unit: 'mm', group: 'Rand' },
       { key: 'shadow', idx: 15, label: 'Schatten', type: 'range', min: 0, max: 1, step: 0.01, def: 0.4, group: 'Rand', showIf: (p) => +p.shape === 0 },
       ...MASK.map((m) => ({ ...m, showIf: m.showIf ? (p) => +p.shape === 1 && m.showIf(p) : (p) => +p.shape === 1 })),
+    ],
+  },
+  {
+    id: 'punktstich', idx: 6, name: 'Punktstich',
+    desc: 'Das Bild entsteht aus unregelmäßig gesetzten Tuschepunkten, wie von Hand getupft – dicht in den Tiefen, locker in den Lichtern. Auf Wunsch als Übergang aus dem Foto.',
+    usesMask: (p) => +p.mode === 1,
+    base: { border: 0.07, bottomExtra: 0.2, ground: 'paper', tone: '#f4f0e7', texture: 0.45, ink: '#24221e' },
+    params: [
+      { key: 'mode', idx: 20, label: 'Darstellung', type: 'select', def: 0, group: 'Punkte', options: [[0, 'nur Punkte'], [1, 'Übergang Bild ↔ Punkte']] },
+      { key: 'spacing', idx: 12, label: 'Punktabstand', type: 'range', min: 0.5, max: 5, step: 0.05, def: 1.3, unit: 'mm', group: 'Punkte' },
+      { key: 'jitter', idx: 13, label: 'Unregelmäßigkeit', type: 'range', min: 0, max: 1, step: 0.01, def: 0.8, group: 'Punkte' },
+      { key: 'gamma', idx: 14, label: 'Kontrast', type: 'range', min: 0.5, max: 2.5, step: 0.01, def: 1.1, group: 'Punkte' },
+      { key: 'maxSize', idx: 15, label: 'Punktgröße in den Tiefen', type: 'range', min: 0.4, max: 1.1, step: 0.01, def: 0.78, group: 'Punkte' },
+      { key: 'minSize', idx: 17, label: 'Punkte in den Lichtern', type: 'range', min: 0, max: 0.3, step: 0.01, def: 0.03, group: 'Punkte' },
+      { key: 'rough', idx: 18, label: 'Unruhige Punktkanten', type: 'range', min: 0, max: 1, step: 0.01, def: 0.35, group: 'Punkte' },
+      { key: 'lineColor', idx: 16, label: 'Punktfarbe aus dem Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Punkte' },
+      { key: 'tSoft', idx: 21, label: 'Übergang weich (breit auslaufend)', type: 'range', min: 0, max: 1, step: 0.01, def: 0.3, group: 'Übergang', showIf: (p) => +p.mode === 1 },
+      { key: 'blur', idx: 11, label: 'Foto wird zum Rand unscharf', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Übergang', showIf: (p) => +p.mode === 1 },
+      ...MASK.map((m) => ({ ...m, showIf: m.showIf ? (p) => +p.mode === 1 && m.showIf(p) : (p) => +p.mode === 1 })),
+    ],
+  },
+  {
+    id: 'stroemung', idx: 7, name: 'Strömung',
+    desc: 'Feine Striche, die den Formen des Bildes folgen – wie eine Federzeichnung oder Holzmaserung. Dichte und Richtung kommen aus dem Foto selbst.',
+    usesMask: (p) => +p.mode === 1,
+    base: { border: 0.07, bottomExtra: 0.2, ground: 'paper', tone: '#f4f0e7', texture: 0.45, ink: '#2a2622' },
+    params: [
+      { key: 'mode', idx: 20, label: 'Darstellung', type: 'select', def: 0, group: 'Striche', options: [[0, 'nur Striche'], [1, 'Übergang Bild ↔ Striche']] },
+      { key: 'len', idx: 12, label: 'Strichlänge', type: 'range', min: 2, max: 30, step: 0.5, def: 10, unit: 'mm', group: 'Striche' },
+      { key: 'cell', idx: 13, label: 'Strichbreite', type: 'range', min: 0.15, max: 1.5, step: 0.01, def: 0.4, unit: 'mm', group: 'Striche' },
+      { key: 'gamma', idx: 14, label: 'Kontrast', type: 'range', min: 0.5, max: 2.5, step: 0.01, def: 1.15, group: 'Striche' },
+      { key: 'density', idx: 16, label: 'Dichte', type: 'range', min: -0.4, max: 0.4, step: 0.01, def: 0, group: 'Striche' },
+      { key: 'det', idx: 18, label: 'Striche folgen: Details ↔ großen Formen', type: 'range', min: 0, max: 1, step: 0.01, def: 0.6, group: 'Striche' },
+      { key: 'angle', idx: 15, label: 'Richtung in ruhigen Flächen', type: 'range', min: -90, max: 90, step: 1, def: 35, unit: '°', group: 'Striche' },
+      { key: 'edgeSoft', idx: 19, label: 'Weiche Strichkanten', type: 'range', min: 0, max: 1, step: 0.01, def: 0.2, group: 'Striche' },
+      { key: 'lineColor', idx: 17, label: 'Strichfarbe aus dem Bild', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Striche' },
+      { key: 'tSoft', idx: 21, label: 'Übergang weich (breit auslaufend)', type: 'range', min: 0, max: 1, step: 0.01, def: 0.3, group: 'Übergang', showIf: (p) => +p.mode === 1 },
+      { key: 'blur', idx: 11, label: 'Foto wird zum Rand unscharf', type: 'range', min: 0, max: 1, step: 0.01, def: 0, group: 'Übergang', showIf: (p) => +p.mode === 1 },
+      ...MASK.map((m) => ({ ...m, showIf: m.showIf ? (p) => +p.mode === 1 && m.showIf(p) : (p) => +p.mode === 1 })),
     ],
   },
 ];
@@ -196,11 +261,16 @@ export function printUniforms(project, layout, src, { outW, outH, tile, flipY = 
   const groundIdx = { paper: 0, linen: 1, plain: 2, transparent: 3 }[sp.ground] ?? 0;
   const look = project.look || {};
   // Edeldruck: Tonwertverlauf
-  const proc = PROCESSES[sp.process] || PROCESSES.cyan;
-  const tone = proc.tones.map(hexToUnit);
-  const tint = hexToUnit(proc.paperTint);
-  const paperStop = paper.map((v, i) => v * 0.8 + tint[i] * 0.2 * (v / Math.max(0.2, Math.max(...paper))));
-  const toneArr = [...tone, paperStop].flat();
+  let toneArr;
+  if (style.id === 'topografie') {
+    toneArr = (LAYER_PALETTES[sp.palette] || LAYER_PALETTES.erde).tones.map(hexToUnit).flat();
+  } else {
+    const proc = PROCESSES[sp.process] || PROCESSES.cyan;
+    const tone = proc.tones.map(hexToUnit);
+    const tint = hexToUnit(proc.paperTint);
+    const paperStop = paper.map((v, i) => v * 0.8 + tint[i] * 0.2 * (v / Math.max(0.2, Math.max(...paper))));
+    toneArr = [...tone, paperStop].flat();
+  }
   const lu = lookUniforms(look.id || 'original', look.strength ?? 1, look.adjust || {}, undefined, { grainSize: look.grainSize || 0.07, grainScale: 1 });
   lu.u_grain = (look.grain ?? 0.3) * (style.id === 'edeldruck' ? 0.7 : 1);
   const sharp = clamp(look.sharp || 0, 0, 1);

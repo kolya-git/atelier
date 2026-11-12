@@ -1,6 +1,6 @@
 // Offline-Fähigkeit: alle App-Dateien werden lokal zwischengespeichert.
 // Automatisch erzeugt mit tools/build-sw.py – nach Änderungen an der App neu ausführen.
-const VERSION = 'atelier-66a65405b4';
+const VERSION = 'atelier-67d9ff94a9';
 const FILES = [
   './',
   'css/app.css',
