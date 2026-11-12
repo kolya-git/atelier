@@ -1,0 +1,17 @@
+{
+  "name": "Atelier – Planer & Druckstudio",
+  "short_name": "Atelier",
+  "description": "Instagram-Beiträge und Stories planen, Bilder stilvoll angleichen und große Print-Dateien erzeugen.",
+  "lang": "de",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f1ec",
+  "theme_color": "#f4f1ec",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
